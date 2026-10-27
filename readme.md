@@ -82,6 +82,7 @@ docker compose run --rm builder
 2. Configure and build:
 ```
 cp /repo/diffconfig .config
+sudo chown -R builder.builder /home/builder
 echo "# CONFIG_SIGNED_PACKAGES is not set" >> .config  # Optional: disable signature verification
 make defconfig
 make -j$(nproc)
