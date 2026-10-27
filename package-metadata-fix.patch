@@ -1,0 +1,98 @@
+From 87215b42ce7cfd2f43a9423788184a74e09917f0 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Mario=20Andr=C3=A9s=20P=C3=A9rez?= <mapb_@outlook.com>
+Date: Tue, 8 Sep 2026 19:14:27 +0200
+Subject: [PATCH] package-metadata: drop self-referencing rank from depends-on
+ gates
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Based on:
+- 218aad6e2fb604ec79deff99d1aebc87189f005a re-emit a provider's depends
+- 38824a13516db2b51067e6851b763b9846209b90 fold the select condition onto re-emitted deps
+- 47d6b05ad328e80e4ee05e48aa95462f3518c014 provides-based dep resolution(%vpackage/@vdeps machinery)
+- 1fd50531cac9c41334d8f57e2dbc1f50c3572445 "<" rank comparison on provider selection
+
+The provider-selection rank ('A<B', born in 1fd50531) is RHS-anchored
+on the stanza owner. When a consumer +selects a provider of a PROVIDES
+target served by >=2 providers, the provider's dependencies are
+re-emitted into the consumer's kconfig block under this rank. A bare
+@() arch/feature dep folded under it becomes:
+
+  depends on !(PACKAGE_librespeed-cli-rust<PACKAGE_librespeed-common)
+              || (aarch64||arm||i386||i686||loongarch64||mips||...)
+
+Kconfig treats any occurrence of a symbol in a dependency edge as an
+edge, even negated under '!() ||', so PACKAGE_librespeed-common lands
+in its own dir_dep: a recursive dependency self-loop.
+
+The self-reference reaches the owner's stanza through any re-emitted
+dependency emitted as depends-on: provider '@()' arch gates, plain
+deps on a second virtual that '||'-expand, and plain deps on ordinary
+packages inheriting the rank-bearing parent. Rank is therefore
+generated only for select emission: it is built into a separate
+variable and folded into the select gate alone, while re-emission
+carries the pre-rank negation instead (!OTHER / !(A||B) over all
+leftovers, exactly as before 1fd50531). Within a stanza no depends-on
+gate can therefore self-reference, except for self-providing
+consumers (provide and depend on the same name), which keep
+historical behavior; user conditions, parent conditions and all
+select arbitration remain untouched.
+
+Fixes: 1fd50531cac9 ("metadata: ensure one dependency provider to be y if a package is y")
+Signed-off-by: Mario Andrés Pérez <mapb_@outlook.com>
+---
+ scripts/package-metadata.pl | 21 +++++++++++++++++----
+ 1 file changed, 17 insertions(+), 4 deletions(-)
+
+diff --git a/scripts/package-metadata.pl b/scripts/package-metadata.pl
+index 31fbe9dc5a3530..f25a85b36f9695 100755
+--- a/scripts/package-metadata.pl
++++ b/scripts/package-metadata.pl
+@@ -181,6 +181,8 @@ sub mconf_depends {
+ 		}
+ 		if ($flags =~ /\+/) {
+ 			my $vdep = $vpackage{$depend};
++			my $rank;
++			my $negation;
+ 			if ($vdep) {
+ 				my @vdeps;
+ 
+@@ -196,22 +198,33 @@ sub mconf_depends {
+ 				$depend = shift @vdeps;
+ 
+ 				if (@vdeps > 1) {
+-					$condition = ($condition ? "$condition && " : '') . join("&&", map { "PACKAGE_$_<PACKAGE_$pkgname" } @vdeps);
++					$rank = join("&&", map { "PACKAGE_$_<PACKAGE_$pkgname" } @vdeps);
++					$negation = '!('.join("||", map { "PACKAGE_$_" } @vdeps).')';
+ 				} elsif (@vdeps > 0) {
+-					$condition = ($condition ? "$condition && " : '') . "PACKAGE_${vdeps[0]}<PACKAGE_$pkgname";
++					$rank = "PACKAGE_${vdeps[0]}<PACKAGE_$pkgname";
++					$negation = '!PACKAGE_'.$vdeps[0];
+ 				}
+ 			}
+ 
+ 			# Menuconfig will not treat 'select FOO' as a real dependency
+ 			# thus if FOO depends on other config options, these dependencies
+ 			# will not be checked. To fix this, we simply emit all of FOO's
+-			# depends here as well.
+-			$package{$depend} and push @t_depends, [ $package{$depend}->{depends}, $condition ];
++			# depends here as well. Re-emitted deps carry the pre-rank
++			# negation instead of the rank, as before 1fd50531.
++			my $reemit = $condition;
++			$reemit = ($reemit ? "$reemit && " : '') . $negation if defined $negation;
++			$package{$depend} and push @t_depends, [ $package{$depend}->{depends}, $reemit ];
+ 
+ 			$m = "select";
+ 			next if $only_dep;
+ 
+ 			$flags =~ /@/ or $depend = "PACKAGE_$depend";
++
++			# arbitration gate for select emission only (1fd50531's charter);
++			# re-emission above carries the negation instead of the rank
++			if (defined $rank) {
++				$condition = ($condition ? "$condition && " : '') . $rank;
++			}
+ 		} else {
+ 			my $vdep = $vpackage{$depend};
+ 			if ($vdep && @$vdep > 0) {
