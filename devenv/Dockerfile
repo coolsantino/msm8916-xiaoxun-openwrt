@@ -17,17 +17,20 @@ WORKDIR /home/builder
 
 FROM base AS openwrt
 
-ENV BRANCH=main
+ENV BRANCH=openwrt-25.12
 
 # Clone OpenWrt repository
 RUN git clone --depth=1 -b ${BRANCH} https://git.openwrt.org/openwrt/openwrt.git openwrt
 
 # Apply patch inside openwrt directory
+COPY package-metadata-fix.patch .
 COPY enable_wcn36xx_mac80211.patch .
+
 RUN git apply enable_wcn36xx_mac80211.patch
 
 # Update and install feeds
 RUN cd openwrt && \
+    git apply ../package-metadata-fix.patch && \
     ./scripts/feeds update -a && \
     ./scripts/feeds install -a && \
     rm -rf tmp
