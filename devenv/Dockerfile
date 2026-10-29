@@ -32,10 +32,10 @@ RUN git apply enable_wcn36xx_mac80211.patch
 RUN cd openwrt && \
     git apply ../package-metadata-fix.patch && \
     git clone https://github.com/yichya/luci-app-xray package/luci-app-xray && \
-    echo 'src-git amneziawg https://github.com/amnezia-vpn/amneziawg-openwrt.git' >> ./feeds.conf.default && \
+    echo 'src-git amneziawg https://github.com/EgorHenek/awg-openwrt' >> ./feeds.conf.default && \
     echo 'src-git-full luci_app_xray https://github.com/yichya/luci-app-xray' >> ./feeds.conf.default && \
-    ./scripts/feeds update -a && \
-    ./scripts/feeds install -a && \
+    ./scripts/feeds update -a -f && \
+    ./scripts/feeds install -a -f && \
     rm -rf tmp
 
 WORKDIR /home/builder/openwrt
