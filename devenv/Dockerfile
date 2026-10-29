@@ -31,6 +31,7 @@ RUN git apply enable_wcn36xx_mac80211.patch
 # Update and install feeds
 RUN cd openwrt && \
     git apply ../package-metadata-fix.patch && \
+    echo 'src-git amneziawg https://github.com/amnezia-vpn/amneziawg-openwrt.git' >> ./feeds.conf.default && \
     ./scripts/feeds update -a && \
     ./scripts/feeds install -a && \
     rm -rf tmp
