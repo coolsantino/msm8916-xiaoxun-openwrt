@@ -70,7 +70,7 @@ CONFIG_PACKAGE_luci-proto-ppp=y
 CONFIG_PACKAGE_luci-proto-wireguard=y
 CONFIG_PACKAGE_luci-proto-amneziawg=y
 CONFIG_PACKAGE_luci-theme-bootstrap=y
-CONFIG_PACKAGE_luci-app-amneziawg
+CONFIG_PACKAGE_luci-app-amneziawg=y
 CONFIG_PACKAGE_luci-app-xray=y
 CONFIG_PACKAGE_luci-app-xray-geodata=y
 CONFIG_PACKAGE_luci-app-xray-status=y
