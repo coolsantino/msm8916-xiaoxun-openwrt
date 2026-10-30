@@ -16,6 +16,35 @@ MNT="/tmp/mnt/msmfw"
 FW="/lib/firmware"
 MCFG_REL="${MCFG_PATH:-$DEFAULT_MCFG_PATH}"
 
+MODEM_MOUNTED=0
+PERSIST_MOUNTED=0
+
+# Always release any partition mounted by this script, including on errors.
+# A failed extraction must retain its non-zero exit status and must not set
+# the DUMPED marker.
+cleanup() {
+  rc=$?
+  trap - 0 HUP INT TERM
+
+  if [ "$PERSIST_MOUNTED" -eq 1 ]; then
+    if ! umount "$MNT/persist" >/dev/null 2>&1; then
+      log "ERROR: failed to unmount persist during cleanup"
+      [ "$rc" -ne 0 ] || rc=1
+    fi
+  fi
+  if [ "$MODEM_MOUNTED" -eq 1 ]; then
+    if ! umount "$MNT/modem" >/dev/null 2>&1; then
+      log "ERROR: failed to unmount modem during cleanup"
+      [ "$rc" -ne 0 ] || rc=1
+    fi
+  fi
+
+  rmdir "$MNT/persist" "$MNT/modem" 2>/dev/null || true
+  exit "$rc"
+}
+trap cleanup 0
+trap 'exit 1' HUP INT TERM
+
 # Resolve a GPT partition by its PARTNAME exported by the kernel in sysfs.
 # This avoids assuming that the eMMC is always /dev/mmcblk0 or that its
 # partition numbers never change.
@@ -50,8 +79,8 @@ find_partition_by_name() {
   printf '%s\n' "$found"
 }
 
-# Mount a named GPT partition read-only. Failure is reported to the caller,
-# which can decide whether to continue without that partition.
+# Mount a named GPT partition read-only. Both required partitions must mount;
+# callers must not ignore a failure.
 mount_partition_by_name() {
   partition_name="$1"
   filesystem="$2"
@@ -59,32 +88,47 @@ mount_partition_by_name() {
   mountpoint="$4"
 
   if ! device=$(find_partition_by_name "$partition_name"); then
-    log "WARN: cannot resolve partition '$partition_name'; skipping mount"
+    log "ERROR: cannot resolve required partition '$partition_name'"
     return 1
   fi
 
-  if mount -t "$filesystem" -o "$mount_options" "$device" "$mountpoint"; then
-    log "mounted GPT partition '$partition_name' ($device) at $mountpoint"
-    return 0
+  if ! mount -t "$filesystem" -o "$mount_options" "$device" "$mountpoint"; then
+    log "ERROR: mount failed for required partition '$partition_name' ($device)"
+    return 1
   fi
 
-  log "WARN: mount failed for GPT partition '$partition_name' ($device)"
-  return 1
+  log "mounted GPT partition '$partition_name' ($device) at $mountpoint"
+  return 0
 }
 
 log "start (marker not present)"
-# Prepare mount points and target
 mkdir -p "$MNT/modem" "$MNT/persist" "$FW/wlan/prima"
 
-# Mount by GPT partition name, not by hard-coded /dev/mmcblk0pN nodes.
-mount_partition_by_name modem vfat ro,nosuid,nodev,noexec,iocharset=iso8859-1,codepage=437 "$MNT/modem" || true
-mount_partition_by_name persist ext4 ro,nosuid,nodev,noexec "$MNT/persist" || true
+# These partitions are required. Abort on either lookup or mount failure.
+if mount_partition_by_name modem vfat ro,nosuid,nodev,noexec,iocharset=iso8859-1,codepage=437 "$MNT/modem"; then
+  MODEM_MOUNTED=1
+else
+  log "ERROR: required modem partition is unavailable; aborting without marker"
+  exit 1
+fi
+
+if mount_partition_by_name persist ext4 ro,nosuid,nodev,noexec "$MNT/persist"; then
+  PERSIST_MOUNTED=1
+else
+  log "ERROR: required persist partition is unavailable; aborting without marker"
+  exit 1
+fi
 
 # Copy if exists!
 copy_if() {
-  src="$1"; dst="$2"
+  src="$1"
+  dst="$2"
   if [ -f "$src" ]; then
-    cp -af "$src" "$dst" && log "copied $(basename "$src")" || return $?
+    cp -af "$src" "$dst" || {
+      log "ERROR: failed to copy '$src' to '$dst'"
+      return 1
+    }
+    log "copied $(basename "$src")"
   fi
   return 0
 }
@@ -94,16 +138,27 @@ for p in "$MNT/modem"/image/wcnss.mdt "$MNT/modem"/image/wcnss.b* \
          "$MNT/modem"/image/modem.mdt "$MNT/modem"/image/modem.b* \
          "$MNT/modem"/image/mba.mbn
 do
-  [ -f "$p" ] && cp -af "$p" "$FW/"
+  if [ -f "$p" ]; then
+    cp -af "$p" "$FW/" || {
+      log "ERROR: failed to copy modem firmware '$p'"
+      exit 1
+    }
+  fi
 done
+
 # Wi-Fi NV/configs required by wcn36xx (place under wlan/prima)
 copy_if "$MNT/persist/WCNSS_qcom_wlan_nv.bin" "$FW/wlan/prima/WCNSS_qcom_wlan_nv.bin"
 copy_if "$MNT/modem/image/wlan/prima/WCNSS_qcom_wlan_nv.bin" "$FW/wlan/prima/WCNSS_qcom_wlan_nv.bin"
 copy_if "$MNT/modem/image/wlan/prima/WCNSS_cfg.dat" "$FW/wlan/prima/WCNSS_cfg.dat"
 copy_if "$MNT/modem/image/wlan/prima/WCNSS_qcom_cfg.ini" "$FW/wlan/prima/WCNSS_qcom_cfg.ini"
+
 # MCFG handling:
 if [ -f "$MNT/modem/$MCFG_REL/mcfg_sw.mbn" ]; then
-  cp -af "$MNT/modem/$MCFG_REL/mcfg_sw.mbn" "$FW/MCFG_SW.MBN" && log "MCFG from modem:$MCFG_REL"
+  cp -af "$MNT/modem/$MCFG_REL/mcfg_sw.mbn" "$FW/MCFG_SW.MBN" || {
+    log "ERROR: failed to copy MCFG from modem:$MCFG_REL"
+    exit 1
+  }
+  log "MCFG from modem:$MCFG_REL"
 else
   log "WARN: MCFG 'MCFG_PATH=$MCFG_REL' not found in modem"
 fi
@@ -112,12 +167,22 @@ fi
 [ -f "$FW/mcfg_sw.mbn" ] && ln -sf "$FW/mcfg_sw.mbn" "$FW/MCFG_SW.MBN" 2>/dev/null || true
 
 sync
-# Unmount and cleanup
-umount "$MNT/modem" 2>/dev/null || true
-umount "$MNT/persist" 2>/dev/null || true
-rmdir "$MNT/persist" "$MNT/modem" 2>/dev/null || true
 
-# Set marker and reboot once
+# Unmount successfully before declaring the dump complete.
+if ! umount "$MNT/persist"; then
+  log "ERROR: failed to unmount persist; refusing to set DUMPED marker"
+  exit 1
+fi
+PERSIST_MOUNTED=0
+
+if ! umount "$MNT/modem"; then
+  log "ERROR: failed to unmount modem; refusing to set DUMPED marker"
+  exit 1
+fi
+MODEM_MOUNTED=0
+
+# The marker is written only after both required partitions were mounted,
+# firmware processing completed, and both mounts were released.
 touch "$MARKER"
 log "Dumped!"
 
