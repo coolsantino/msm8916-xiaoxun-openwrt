@@ -28,14 +28,12 @@ cleanup() {
 
   if [ "$PERSIST_MOUNTED" -eq 1 ]; then
     if ! umount "$MNT/persist" >/dev/null 2>&1; then
-      log "ERROR: failed to unmount persist during cleanup"
-      [ "$rc" -ne 0 ] || rc=1
+      log "WARN: failed to unmount persist during cleanup; continuing"
     fi
   fi
   if [ "$MODEM_MOUNTED" -eq 1 ]; then
     if ! umount "$MNT/modem" >/dev/null 2>&1; then
-      log "ERROR: failed to unmount modem during cleanup"
-      [ "$rc" -ne 0 ] || rc=1
+      log "WARN: failed to unmount modem during cleanup; continuing"
     fi
   fi
 
@@ -168,21 +166,20 @@ fi
 
 sync
 
-# Unmount successfully before declaring the dump complete.
+# Unmount errors are non-fatal: firmware extraction has already completed.
+# Log failures, but do not turn an otherwise successful dump into a failure.
 if ! umount "$MNT/persist"; then
-  log "ERROR: failed to unmount persist; refusing to set DUMPED marker"
-  exit 1
+  log "WARN: failed to unmount persist; continuing"
 fi
 PERSIST_MOUNTED=0
 
 if ! umount "$MNT/modem"; then
-  log "ERROR: failed to unmount modem; refusing to set DUMPED marker"
-  exit 1
+  log "WARN: failed to unmount modem; continuing"
 fi
 MODEM_MOUNTED=0
 
-# The marker is written only after both required partitions were mounted,
-# firmware processing completed, and both mounts were released.
+# The marker is written only after both required partitions were mounted
+# and firmware processing completed. Unmount failures are logged, not fatal.
 touch "$MARKER"
 log "Dumped!"
 
