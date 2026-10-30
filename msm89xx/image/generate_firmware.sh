@@ -124,7 +124,7 @@ echo "[+] Downloading Qualcomm firmware..."
 FWZIP="$BUILDDIR/dragonboard-410c-bootloader-emmc-linux-176.zip"
 if [ ! -f "$FWZIP" ]; then
   wget -q --show-progress -O "$FWZIP" \
-    "https://github.com/Mio-sha512/openstick-stuff/raw/refs/heads/main/builder-stuff/dragonboard-410c-bootloader-emmc-linux-176.zip"
+    "https://raw.githubusercontent.com/coolsantino/openstick-stuff/refs/heads/main/builder-stuff/dragonboard-410c-bootloader-emmc-linux-176.zip"
 fi
 
 # Extract required files only.
